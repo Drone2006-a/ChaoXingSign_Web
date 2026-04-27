@@ -36,6 +36,9 @@ const COMM_SIGN_KEY = 'comm_sign_key_2026';
 const STORAGE_COOKIE = 'chaoxing_web_state';
 const COOKIE_CHUNK_PREFIX = `${STORAGE_COOKIE}_`;
 const COOKIE_MAX = 2800;
+const CLOUD_API_URL = 'https://tk.udrone.vip/api.php';
+const CHAOXING_PASSPORT_URL = 'https://passport2.chaoxing.com';
+const CHAOXING_PASSPORT_API_URL = 'https://passport2-api.chaoxing.com';
 
 const defaultState = {
   users: [],
@@ -120,7 +123,7 @@ function useCookieState() {
 }
 
 function getCloudEndpoint() {
-  return import.meta.env.VITE_CLOUD_API_URL || '/cloud-api';
+  return import.meta.env.VITE_CLOUD_API_URL || (import.meta.env.PROD ? CLOUD_API_URL : '/cloud-api');
 }
 
 async function cloudCall(params) {
@@ -151,8 +154,19 @@ async function cloudCall(params) {
   return parsed.result;
 }
 
+function resolveApiUrl(url) {
+  if (!import.meta.env.PROD) return url;
+  if (url.startsWith('/chaoxing-passport-api')) {
+    return `${CHAOXING_PASSPORT_API_URL}${url.replace('/chaoxing-passport-api', '')}`;
+  }
+  if (url.startsWith('/chaoxing-passport')) {
+    return `${CHAOXING_PASSPORT_URL}${url.replace('/chaoxing-passport', '')}`;
+  }
+  return url;
+}
+
 async function postForm(url, params) {
-  const response = await fetch(url, {
+  const response = await fetch(resolveApiUrl(url), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
