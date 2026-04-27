@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import CryptoJS from 'crypto-js';
 import {
@@ -67,6 +67,16 @@ function writeCookie(name, value, days = 365) {
 
 function removeCookie(name) {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+}
+
+function clearAuthCookies(extraNames = []) {
+  const baseNames = ['_uid', 'UID', 'fid', 'vc3', 'vc2', '_d', 'uf'];
+  const names = new Set([...baseNames, ...extraNames]);
+  names.forEach(name => {
+    if (name && name !== STORAGE_COOKIE && !name.startsWith(`${STORAGE_COOKIE}_`)) {
+      removeCookie(name);
+    }
+  });
 }
 
 function loadState() {
@@ -161,8 +171,14 @@ async function postForm(url, params) {
     credentials: 'include',
   });
   const text = await response.text();
-  const parsed = JSON.parse(text);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    parsed = { ok: response.ok, status: response.status, raw: text };
+  }
   parsed.__cookies = parseCookieHeader(response.headers.get('x-chaoxing-set-cookie') || '');
+  parsed.__status = response.status;
   return parsed;
 }
 
@@ -298,6 +314,7 @@ function App() {
   };
 
   const logout = () => {
+    clearAuthCookies(Object.keys(currentUser?.cookies || {}));
     setState(current => ({ ...current, currentPhone: '' }));
     setScreen('login');
     notify('已退出当前账号');
@@ -430,10 +447,11 @@ function LoginView({ users, onLogin, onSwitchUser, notify }) {
           independentId: '0',
           independentNameId: '0',
         });
-        if (result.status || result.result || result.msg === 'ok') {
+        const hasCookies = Object.keys(result.__cookies || {}).length > 0;
+        if (result.status || result.result || result.msg === 'ok' || hasCookies) {
           finishLogin(result.__cookies || {});
         } else {
-          notify(result.msg2 || result.mes || '登录接口返回失败，可粘贴 Cookies 后保存', 'error');
+          notify(result.msg2 || result.mes || `登录接口返回失败(${result.__status || 'unknown'})`, 'error');
         }
       } else {
         const logininfo = await cloudCall({ action: 'encrypt_login', phone, code });
@@ -444,8 +462,9 @@ function LoginView({ users, onLogin, onSwitchUser, notify }) {
           roleSelect: 'true',
           entype: '1',
         });
-        if (result.url) finishLogin(result.__cookies || {});
-        else notify(result.mes || '验证码登录失败，可粘贴 Cookies 后保存', 'error');
+        const hasCookies = Object.keys(result.__cookies || {}).length > 0;
+        if (result.url || hasCookies) finishLogin(result.__cookies || {});
+        else notify(result.mes || `验证码登录失败(${result.__status || 'unknown'})`, 'error');
       }
     } catch (error) {
       notify(`${error.message}。浏览器可能拦截跨域登录，可粘贴 Cookies 后保存。`, 'error');
@@ -687,9 +706,21 @@ function UserInfoModal({ user, onClose }) {
 
 function SignInView({ currentUser, settings, history, notify, onHistory }) {
   const [qrValue, setQrValue] = useState('');
+  const [scanState, setScanState] = useState('idle');
+  const [scanError, setScanError] = useState('');
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const frameRef = useRef(0);
 
-  const handleScan = () => {
-    if (!qrValue.trim()) {
+  const isMobileClient = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const supportsCameraScan =
+    isMobileClient &&
+    typeof window !== 'undefined' &&
+    typeof window.BarcodeDetector !== 'undefined' &&
+    !!navigator.mediaDevices?.getUserMedia;
+
+  const handleScan = (value = qrValue) => {
+    if (!value.trim()) {
       notify('请先粘贴二维码链接或扫码结果', 'error');
       return;
     }
@@ -698,12 +729,75 @@ function SignInView({ currentUser, settings, history, notify, onHistory }) {
       time: new Date().toLocaleString('zh-CN'),
       course: currentUser?.name || currentUser?.phone || '未选择用户',
       status: '已打开签到链接',
-      url: qrValue,
+      url: value,
     };
     onHistory(item);
-    window.open(qrValue, '_blank', 'noopener,noreferrer');
+    window.open(value, '_blank', 'noopener,noreferrer');
     notify(settings.batchSignIn ? '正在启动批量签到...' : '已打开签到页面', 'success');
   };
+
+  const stopCameraScan = () => {
+    if (frameRef.current) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = 0;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setScanState('idle');
+  };
+
+  const startCameraScan = async () => {
+    if (!supportsCameraScan) return;
+    try {
+      setScanError('');
+      setScanState('starting');
+      const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) throw new Error('摄像头预览初始化失败');
+      video.srcObject = stream;
+      video.setAttribute('playsinline', 'true');
+      await video.play();
+      setScanState('scanning');
+
+      const scanFrame = async () => {
+        if (!videoRef.current || video.readyState < 2) {
+          frameRef.current = window.requestAnimationFrame(scanFrame);
+          return;
+        }
+        try {
+          const codes = await detector.detect(video);
+          if (codes[0]?.rawValue) {
+            const rawValue = codes[0].rawValue.trim();
+            setQrValue(rawValue);
+            stopCameraScan();
+            handleScan(rawValue);
+            return;
+          }
+        } catch {
+          // Ignore single frame failures and keep scanning.
+        }
+        frameRef.current = window.requestAnimationFrame(scanFrame);
+      };
+
+      frameRef.current = window.requestAnimationFrame(scanFrame);
+    } catch (error) {
+      stopCameraScan();
+      setScanError(error?.message || '无法打开摄像头，请检查权限设置');
+      notify('无法打开摄像头，请检查权限设置', 'error');
+    }
+  };
+
+  useEffect(() => () => stopCameraScan(), []);
 
   return (
     <section className="page">
@@ -713,6 +807,23 @@ function SignInView({ currentUser, settings, history, notify, onHistory }) {
           <QrCode size={82} />
           <h3>扫码签到</h3>
           <p>将二维码链接或扫码内容放入下方</p>
+          {supportsCameraScan && (
+            <div className="camera-scan-wrap">
+              {scanState === 'scanning' || scanState === 'starting' ? (
+                <>
+                  <video ref={videoRef} className="camera-preview" muted autoPlay playsInline />
+                  <button type="button" className="secondary-button" onClick={stopCameraScan}>
+                    停止扫码
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="secondary-button" onClick={startCameraScan}>
+                  <Camera size={18} /> 手机摄像头扫码
+                </button>
+              )}
+              {scanError && <small className="camera-error">{scanError}</small>}
+            </div>
+          )}
           <textarea id="qrInput" value={qrValue} onChange={event => setQrValue(event.target.value)} placeholder="https://..." />
           <button type="button" className="primary-button pill" onClick={handleScan}>
             <QrCode size={18} /> 扫码签到
