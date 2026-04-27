@@ -84,7 +84,7 @@ function rewriteResponse(response) {
   if (setCookie) {
     const rewrittenCookie = rewriteSetCookie(setCookie);
     headers.set('set-cookie', rewrittenCookie);
-    headers.set('x-chaoxing-set-cookie', flattenSetCookie(rewrittenCookie));
+    headers.set('x-chaoxing-set-cookie', encodeCookieHeader(rewrittenCookie));
     headers.set('access-control-expose-headers', 'x-chaoxing-set-cookie');
   }
 
@@ -107,6 +107,7 @@ function rewriteSetCookie(value) {
     .replace(/;\s*SameSite=None/gi, '; SameSite=Lax');
 }
 
-function flattenSetCookie(value) {
-  return value.replace(/,\s*(?=[^;,=\s]+=)/g, '\n');
+function encodeCookieHeader(value) {
+  const cookies = value.split(/,\s*(?=[^;,=\s]+=)/g).map(item => item.trim()).filter(Boolean);
+  return btoa(encodeURIComponent(JSON.stringify(cookies)));
 }

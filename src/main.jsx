@@ -168,14 +168,27 @@ async function postForm(url, params) {
 
 function parseCookieHeader(cookieHeader) {
   if (!cookieHeader) return {};
-  return cookieHeader.split('\n').reduce((cookies, line) => {
+  const cookieLines = decodeCookieHeader(cookieHeader);
+  return cookieLines.reduce((cookies, line) => {
     const [pair] = line.split(';');
     const index = pair.indexOf('=');
-    if (index > 0) {
-      cookies[pair.slice(0, index).trim()] = pair.slice(index + 1).trim();
-    }
+    if (index > 0) cookies[pair.slice(0, index).trim()] = pair.slice(index + 1).trim();
     return cookies;
   }, {});
+}
+
+function decodeCookieHeader(cookieHeader) {
+  try {
+    const decoded = decodeURIComponent(atob(cookieHeader));
+    const parsed = JSON.parse(decoded);
+    if (Array.isArray(parsed)) return parsed.filter(Boolean);
+  } catch {
+    // Backward compatible parsing for older proxy response format.
+  }
+  return cookieHeader
+    .split(/[\n\r]+|,\s*(?=[^;,=\s]+=)/g)
+    .map(item => item.trim())
+    .filter(Boolean);
 }
 
 function maskPhone(phone = '') {
