@@ -14,6 +14,11 @@ const routes = [
     target: 'https://passport2.chaoxing.com',
     stripPrefix: true,
   },
+  {
+    prefix: '/chaoxing-mobilelearn',
+    target: 'https://mobilelearn.chaoxing.com',
+    stripPrefix: true,
+  },
 ];
 
 export default {
@@ -97,6 +102,7 @@ function rewriteResponse(response) {
 
 function rewriteLocation(location) {
   return location
+    .replace(/^https:\/\/mobilelearn\.chaoxing\.com/i, '/chaoxing-mobilelearn')
     .replace(/^https:\/\/passport2-api\.chaoxing\.com/i, '/chaoxing-passport-api')
     .replace(/^https:\/\/passport2\.chaoxing\.com/i, '/chaoxing-passport');
 }

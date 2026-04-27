@@ -707,6 +707,7 @@ function UserInfoModal({ user, onClose }) {
 function SignInView({ currentUser, settings, history, notify, onHistory }) {
   const [qrValue, setQrValue] = useState('');
   const [scanState, setScanState] = useState('idle');
+  const [signing, setSigning] = useState(false);
   const [scanError, setScanError] = useState('');
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -719,21 +720,68 @@ function SignInView({ currentUser, settings, history, notify, onHistory }) {
     typeof window.BarcodeDetector !== 'undefined' &&
     !!navigator.mediaDevices?.getUserMedia;
 
-  const handleScan = (value = qrValue) => {
+  const buildSignRequestUrl = rawValue => {
+    const trimmed = rawValue.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('/')) return trimmed;
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.hostname === 'mobilelearn.chaoxing.com') {
+        return `/chaoxing-mobilelearn${parsed.pathname}${parsed.search}`;
+      }
+    } catch {
+      return trimmed;
+    }
+    return trimmed;
+  };
+
+  const isSignSuccess = text => {
+    if (!text) return false;
+    if (/"result"\s*:\s*1/.test(text) || /"status"\s*:\s*true/.test(text)) return true;
+    if (/签到成功|已签到|签\W*到\W*成\W*功/.test(text)) return true;
+    if (/未登录|请先登录|登录失效/.test(text)) return false;
+    return false;
+  };
+
+  const handleScan = async (value = qrValue) => {
     if (!value.trim()) {
       notify('请先粘贴二维码链接或扫码结果', 'error');
       return;
     }
-    const item = {
-      id: Date.now(),
-      time: new Date().toLocaleString('zh-CN'),
-      course: currentUser?.name || currentUser?.phone || '未选择用户',
-      status: '已打开签到链接',
-      url: value,
-    };
-    onHistory(item);
-    window.open(value, '_blank', 'noopener,noreferrer');
-    notify(settings.batchSignIn ? '正在启动批量签到...' : '已打开签到页面', 'success');
+    if (!currentUser) {
+      notify('请先登录账号后再签到', 'error');
+      return;
+    }
+    const requestUrl = buildSignRequestUrl(value);
+    if (!requestUrl) {
+      notify('二维码内容无效', 'error');
+      return;
+    }
+    try {
+      setSigning(true);
+      const response = await fetch(requestUrl, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      const text = await response.text();
+      const ok = response.ok && isSignSuccess(text);
+      onHistory({
+        id: Date.now(),
+        time: new Date().toLocaleString('zh-CN'),
+        course: currentUser.name || currentUser.phone || '未选择用户',
+        status: ok ? '签到成功' : `签到失败(${response.status})`,
+        url: value,
+      });
+      if (ok) {
+        notify(settings.batchSignIn ? '批量签到已执行' : '签到成功', 'success');
+      } else {
+        notify('签到失败，请检查二维码是否有效或账号是否登录', 'error');
+      }
+    } catch {
+      notify('签到请求失败，请检查网络或稍后重试', 'error');
+    } finally {
+      setSigning(false);
+    }
   };
 
   const stopCameraScan = () => {
@@ -825,7 +873,7 @@ function SignInView({ currentUser, settings, history, notify, onHistory }) {
             </div>
           )}
           <textarea id="qrInput" value={qrValue} onChange={event => setQrValue(event.target.value)} placeholder="https://..." />
-          <button type="button" className="primary-button pill" onClick={handleScan}>
+          <button type="button" className="primary-button pill" onClick={() => handleScan()} disabled={signing}>
             <QrCode size={18} /> 扫码签到
           </button>
         </article>
