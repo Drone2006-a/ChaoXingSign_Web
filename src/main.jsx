@@ -161,7 +161,21 @@ async function postForm(url, params) {
     credentials: 'include',
   });
   const text = await response.text();
-  return JSON.parse(text);
+  const parsed = JSON.parse(text);
+  parsed.__cookies = parseCookieHeader(response.headers.get('x-chaoxing-set-cookie') || '');
+  return parsed;
+}
+
+function parseCookieHeader(cookieHeader) {
+  if (!cookieHeader) return {};
+  return cookieHeader.split('\n').reduce((cookies, line) => {
+    const [pair] = line.split(';');
+    const index = pair.indexOf('=');
+    if (index > 0) {
+      cookies[pair.slice(0, index).trim()] = pair.slice(index + 1).trim();
+    }
+    return cookies;
+  }, {});
 }
 
 function maskPhone(phone = '') {
@@ -404,7 +418,7 @@ function LoginView({ users, onLogin, onSwitchUser, notify }) {
           independentNameId: '0',
         });
         if (result.status || result.result || result.msg === 'ok') {
-          finishLogin({});
+          finishLogin(result.__cookies || {});
         } else {
           notify(result.msg2 || result.mes || '登录接口返回失败，可粘贴 Cookies 后保存', 'error');
         }
@@ -417,7 +431,7 @@ function LoginView({ users, onLogin, onSwitchUser, notify }) {
           roleSelect: 'true',
           entype: '1',
         });
-        if (result.url) finishLogin({});
+        if (result.url) finishLogin(result.__cookies || {});
         else notify(result.mes || '验证码登录失败，可粘贴 Cookies 后保存', 'error');
       }
     } catch (error) {

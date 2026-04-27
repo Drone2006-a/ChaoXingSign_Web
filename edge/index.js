@@ -82,7 +82,10 @@ function rewriteResponse(response) {
 
   const setCookie = headers.get('set-cookie');
   if (setCookie) {
-    headers.set('set-cookie', rewriteSetCookie(setCookie));
+    const rewrittenCookie = rewriteSetCookie(setCookie);
+    headers.set('set-cookie', rewrittenCookie);
+    headers.set('x-chaoxing-set-cookie', flattenSetCookie(rewrittenCookie));
+    headers.set('access-control-expose-headers', 'x-chaoxing-set-cookie');
   }
 
   return new Response(response.body, {
@@ -102,4 +105,8 @@ function rewriteSetCookie(value) {
   return value
     .replace(/;\s*Domain=[^;]+/gi, '')
     .replace(/;\s*SameSite=None/gi, '; SameSite=Lax');
+}
+
+function flattenSetCookie(value) {
+  return value.replace(/,\s*(?=[^;,=\s]+=)/g, '\n');
 }
